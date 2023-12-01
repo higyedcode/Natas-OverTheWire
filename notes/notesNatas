@@ -1,0 +1,285 @@
+Natas 11
+
+    For base64 encoding, string has to have a length divisible by 4, fill the rest of the string with = as the blank charecter
+
+    We then used the property that: (a ^ secret) ^ a = secret
+    And this way we xor'd the cookie b64 decoded with the initial array dumped as json in string format to get the key. From this output: "b'KNHLKNHLKNHLKNHLI\x02^\x0b\x14N\x06\x0b\nCC@V\x00\x1d\x1cJDX^X\x18\x1e\x08PV\n\x19Y'" we determined that the key is the repeating part which is: "KNHL"
+
+    Then we json encoded the initial array with show-password true, then xor it with the key (using xor from pwn library), and then b64encoded it, and then sent the request to the website with the modified cookie on Burp Suite and got the password for natas12
+
+natas12
+
+    This challenge focused on file upload vulnerabilities. To solve this, I analysed the source code and found out that in the POST request there is a parameter filename which
+    is a hardcoded jpg ( random letters.jpg ). By analysing this file's pathinfo the extension of the uploaded file is decided. Since this is modifiable, we can simply just
+    change the extension of the filename to php, such that the uploaded file will be interpreted as a php file and if you open the file, you actually execute the php code inside!
+
+    This opens up the possibility to an RCE and we can get the code by using echo system('cat /etc/natas_webpass/natas12') in the php file.
+
+natas13
+
+    This is the same website as natas12 but the only difference is that it uses the exif_imagetype() php function to check if the file is really a jpg file, based on the return value
+    In this case, to identify a file as jpg, we need the first 16 bytes, which is the file's signature, which can be found using hexdump or xxd on any jpg file on your system.
+    So in addition to the previous php tags and RCE commands, we need to first write to the file the jpg signature in order for it to pass the exif_imagetype() restriction.
+    From there on we just cat password for natas14
+
+natas14
+
+This level focuses on SQL injection vulnerabilities. This is a basic user and password SQL injqction with no protections where we need to comment out the rest of the query or make it true at all times for it to work.  
+
+    Payloads that work are:
+    natas15"# , this comments out the rest of the query which then becomes SELECT * FROM users where username=natas15
+    something" OR 1=1 # , which makes the query: SELECT * FROM users where username=something OR 1=1, which is always true, so returns all from users
+    or put random username, random password and at the end put " OR "1"="1, since the closing " will complete the query and will make sure it returns all the elements from users.
+
+    FOR SOME REASON, the // sign doesn't really work in this challenge, better to use #.
+
+natas15
+
+For this challenge we exploited a blind sql injection method, by checking one of 3 possible responses from the server. To solve this challenge I used Burpsuite's intruder attack , but what worked faster was sqlmap. I used the following instruction: 
+    sqlmap -u "http://natas15.natas.labs.overthewire.org/index.php?debug" --auth-type=Basic --auth-cred=natas15:TTkaI7AWG4iDERztBcEyKV7kRXH1EZRB --string="This user exists" --data "username=natas16" --level=5 --risk=3 -D natas15 -T users -C username,password --dump.
+
+    Here, the -u indicates the url, the --auth-type and --auth-cred are used to bypass the initial authentication necesarry to connect to the website. The --string is the match in case of success, and the data is the data sent in the request. The level and risk are used for more in-depth search. THen we dump what we need: database natas15, table users, column username, password . In the end, we get the response in a nicely formated table.
+
+    When trying to solve this with Burp intruder and a bruteforce attack, using SUBSTRING(password, 1, 1)=$a$, and then substituting $a$ with each letter/digit, I ran into the issue that the comparison was not case sensitive and I would get 2 different solutions everytime(ex: t and T, a and A). To solve this, to make the comparison case sensitive we need to use the BINARY keyword before the SUBSTRING() instruction. Like this: 
+        username=natas16" AND BINARY SUBSTRING(password,1,1)="§a§
+    Then we can also use the LENGTH(password) > 30 # instruction to find out the length of the password.
+
+    BOTH WAYS WORK, first one is faster.
+
+natas16
+
+    For this challenge, I thought it's just gonna be a basic bypass of the blacklisted characters, but there is no way of bypassing them with my current knowledge. So I figured since the '$' and '%' signs are not blacklisted, we can try to inject commands with the '$' sign. This way, we can do 'culturally$(grep char in /etc/natas_webpass/natas17)' and if the query returns true, that the letter is part of the password, it will change the initial grep to culturallya, or culturallyb, which will not have any matches in the dictionary.txt file.( we chose culturally since it is a word that doesn't have any derivates, so the grep returns only itself, not any derived words, so we can know for sure that by adding a letter after the word we are not creating a derivate word.)
+
+    Then we use this principle to write a script to identify first the letteers used in the password, and then change the grep regex to '^password+chr' to determine the password in a second iteration.
+
+    And we iterate through the letters 32 times because we know for a fact that all passwords in this challenge have a length of 32 characters.
+    We can also test that by doing: $(grep [a-zA-Z0-9]{33} /etc/natas_webpass/natas17)hacker, to check that at 32 letters it gives no output, and at 33 gives output.
+
+    This is another atempt at solving this, but i don't think I have the necesary permisions to overwrite dictionary.txt.
+    $(grep . $(cat /etc/natas_webpass/natas17) 2> dictionary.txt)hacker
+
+    Here I am expecting to grep a file with the name of the password, which doesn't exist on the server since the password is gibberish, and that should throw an error.
+    Since the error doesn't show up on the screen, I try to redirect the error to the dictionary.txt file, but it seems I am not allowed to do that.
+
+natas17
+
+    This challenge is a totally blind sqli, which we have to solve with timeout's using sleep.
+
+    To check if it is time based vulnerable we can do the following: 
+    natas18" AND SLEEP(5); #
+    natas18" AND SLEEP(5); --
+    natas18' AND SLEEP(5); #
+
+    FOr this: AND will execute the second instruction only if the first one fails.
+    OR will execute both instructions regardless of the success status!!!!
+
+    For this challenge we can write a python script which will use the following payload to test letters from the password:
+        username=natas18" and binary substring(password,1,i)='pass+chr' and sleep(2); #
+    The payload checks if the first i characters coincide with pass + the new character, and if that is true the last sleep(2) is executed, causing the response time to be longer than usual.
+    By sending data to the request, we also need to set the headers as {'content-type':'application/x-www-form-urlencoded'}, send the actual data and configure the authentication( from request.auth import HTTPBasicAuth).
+
+    Then to check the response time we check response.elapsed.seconds to be greater than 1 second, and if so add it to the password and break.
+
+    We do this 32 times to get the 32 character password.
+    
+natas18
+
+    In this level, we are introduced the PHPSESSID variable stored in the cookie, and the $_SESSION php global variable which stores information about the user during the current session even throught different pages and different http requests.
+
+    The program prints out the credentials for natas19 only if you are logged in as admin. Although I tried to find the session variable in the inspect window, and modify it there, or by trying to modify it in the Javascript console by doing sesionStorage.setitem("admin",1), it didn't seem to work because it seems you don't have access at all to the session variable as the client. Only the backend has!. So the only thing I could manipulate is the PHPSESSID, which associates an id to a session. By changing the id, you load a different $_SESSION variable, changing the 'client's identity'. 
+
+    I used Burp Intruder and tried PHPSESSID=nr, where nr is in range(1,640). At 119 it seems I have found the id of the admmin user and got the credentials for the next level.
+
+natas19
+
+    --check the source file
+
+natas20
+
+    For whatever reason, this level kept on throwing errors, which made the functionality not work properly. The key was that there was a difference between the writing and reading of data in a local file. Mainly, we are talking about that when reading it would separate after '\n' so you could potentially write a name like 'andrew\nadmin 1', which would then set a new session variable as admin=1. 
+    You need to be careful though to properly encode the '\n' character (%0A is the URL encoding of it!)
+
+    To get more information about the process, don't forget to put ?debug after every url
+
+natas21
+
+    For this level, a vulnerable situation is provided. Two websites are cohosted on the same server probably, potentially sharing the SAME POOL of $_SESSION variables.( The cause of the vulnerability is a poor configuration of the web-server which DOES NOT ENFORCE SEPARATE MECHANISMS FOR STORING SESSIONS ).
+    This then makes it vulnerable because if you find a way to change the SESSION variable in either of them, than that would affect also the other website!!!  
+
+    The first website has no input boxes or fields so we can't do nothing on it. On the second website, by looking at the code, we can see that by modifying the post request and adding additional parameters and values we can add other new values to the session variable.
+    For this to work, we added '&admin=1' to the post request and then, by appending ?debug to the url we can clearly see that it has appended to the SESSION variable.
+
+    If we then go back to the first website, we can see that nothing is changed. THAT IS BECAUSE IT HAS A DIFFERENT PHPSESSID!!!
+    IF we change the PHPSESSID to the one in the 2nd website, where admin=1, then we see that the password to the next level is shown! We are logged in as admin to the website!!!
+
+
+    Useful link: https://www.dev-metal.com/prevent-php-sessions-shared-different-apache-vhosts-different-applications/
+
+    To understand the problem further, the vulnerability occurs when you configure the same 'session.save_path "/var/sessions_app1_and_app2". In this case, every session variable is written to a file in the /var/sessions_app1_and_app2 directory. Since both websites are on the same web_server, you can access both session files from either website. If you were to configure 2 separate folders, then from app1 you could only access a session file created by an app1 user, not a session file created on app2 by an app2 user! If you wanted to access sid2, which exists in session_folder_app2, then if you search in session_folder_app1 for sid2 than you won't find the same file.
+
+natas22
+    THE REDIRECT: header('Location /') redirects the browser to the base address, but Burp Suite can actually capture the output of the thing it wants to hide(the password), capturing also the redirect, but you need to check either in the individual responses of the logs or to set up in settings to capture redirects also!
+    Then you can simply view the password!
+
+    Also if you do a simple curl in the terminal it gets you the password! curl -u natas22:91awVM9oDiUGm33JdzM7RVLBS8bz9n0s --basic http://natas22.natas.labs.overthewire.org/?revelio. So the response needs to be captured before the redirect and you're done=))).
+
+    As a means of prevention: Don't use redirection for hiding sensitive information since it can be accessed easily if the request is intercepted by a proxy or if a simple get request is sent.
+
+natas23
+
+    PHP TYPE JUGGLING VULNERABILITY
+
+    - it occurse when using LOOSE COMPARISON OPERATORS(== OR !=), instead of STRICT COMPARISON OPERATORS(=== OR !==).
+    - PHP will transform variables of different kinds to a common type in order to compare them.
+    - ex: 
+    4 == "4"
+    9 == "9 phones", because it extracts the integer from it
+    '0' = '0e42538869828369823', because it interprets it as 0 to the power something. The issue is the number on the right could be and md5 hash for example!
+
+    This works only if the types of the 2 differ! SO "0" == "password" is clearly false.
+
+    The vulnerabilty can be exploited if there is a json_decode() or unserialze() function used, because the GET or POST parameters are usually transmited as strings, so you cannot manipulate their data type.
+
+    OTHER VULNERABLE FUNCTIONS:
+    in_array(0, $diff) -> loose comparison
+    in_array(0, $diff, true) -> strict comparison
+
+
+
+    Good source: 
+    https://secops.group/php-type-juggling-simplified/
+
+
+    
+![PHP LOOSE COMPARISON](Strict-Comparisions.png)
+
+natas24
+
+    It was just a simple PHP juggling vulnerability by just fuzzing thorugh a wordlist of possibilities after the keyword password. The one that worked made password an array[] and it triggered a warning revealing the password
+
+natas25
+
+    Main topics: Directory traversal + code injection
+
+    In this challenge we can see that the application forbids us to do directory traversals and more so to print out the contents of the natas_webpass folder. This indicates that we need to try directory traversal then. We observe that by putting '....//' instead of '../' in the directory traversal path you can bypass the first step of the algorithm: removing ../ will leave us with another '../'. This way we can then navigate to the logfile, where we can see that the web-agent is actually integrated in a HTML page...which means what? You can execute any PHP code an output it's result because the webpage will execute all pieces of PHP code!. So we capture the request, modify the User-Agent which will then feature in the log file with <?php echo file_get_contents("/etc/natas_webpass/natas26"); ?> and we can then see the password in the log file! 
+    This means that you should eliminate directory traversal some different way , maybe recursively, and to not integrate parts of the input in the HTML( as it is the case of the User Agent here), since they can execute php code and provie an injection point for hackers.
+
+natas26
+
+    This problem reveals an object in the back-end of the application called Logger, which writes an init message and an exit message to a log file. 
+    The UNSECURE thing in the code is the unserialise instruction because you can inject the drawing cookie with a serialised instance of the Logger with the init msg, exit msg and filename SET BY YOU!!! 
+    First we set the init and exit messages to some php code, and we see that only the output of the exit message is captured in the file. So then, we see if we change the extension of the logFile to php we can actually execute that code and read the password from the /etc/natas_webpass/natas27 file!
+
+    The key here is to place this newly created logfile into the img folder, because in the main folder you don't have the persmissions to create a file. 
+
+    Also, to solve this problem you can copy the source code and set up a copy environment by doing 'php -S 127.0.0.1:5500' in the folder with the source php code. In here you can see the error messages and the exact files and file types that are created.
+
+natas27
+
+    This challenge was HAAARD!
+    Here are the things I tried and didn't work:
+    - SQL injection of code, both wiht ' or '1'='1, or other methods like trying to inject the INSERT INTO command with an extra pair of values.
+    - tried fuzzing through some basic characters or php vulnerabilities
+
+    Actually, the only vulnerability in this webpage is the size limit of the database fields. 64 char variables....64!!!
+    So, to solve this, we can actually see that the we get the message GO AWAY HACKER if we try to end the string with spaces...INTERESTING
+    Why would we not be allowed that? Maybe the spaces are ignored and the query considers 'natas28' + ' '*57 == 'natas28'.
+    But we see that when checking for the username the user we are looking for could be an even longer string than 64 chars!!!
+    So we can actually get a new user, natas28 with 57 spaces and then test, put the password a, and then if we log in with natas28 and the password a, it's gonna get a record, which was initially for a different username with test in the end, but because it was truncated now there are two username's in the table natas28. Log in to one, and see the password to the other, because that was created first!.
+
+
+    FUZZING TECHNIQUE in PHP
+    -- fuzz all the bytes %00 - %FF in hex.
+    -- fuzz them in all kinds of different positions
+    -- DO an extract in Burp Suite to see the output content and sort acordingly.
+    
+natas28
+
+    Steps of exploiting AES ECB encryption.
+    1: First we need to find out the size of the block by adding characters and checking the lenght of the output. It normally would add some null characters to fill up the blocks, so for ex: if the block size is 8, then if we input 5,6,7,8 characters the response length should be the same. but when we input 9 characters the response length should be increased by 8!
+    2: Finding the offset of a new clean block of data where we could inject out payload
+    3: Exploit
+
+    Unfortunately, this challenge was really hard, but I learned a lot from it!
+    We start of by sending lots of 'A's to the system, and seeing the encoded query.
+    Firstly, by generating lost of data we can see a pattern that repeats itself, this is due to the fact that the cypher is a block cipher, which encodes blocks of data with the same key, independently of one another -- this is called the ECB(electronic codebook) AES algorithm.
+
+    Seeing that this happens, we identify that the length of the response increases by 16 bytes of data, so the block has 16 bytes!
+    Then we identify that after the 9th position(9*A), a new block of repetitive data is formed with the a's, so the offset after which a fresh block starts is 10.
+    (the block where we input looks something like this xxxxxxAAAAAAAAAA - 6*unknown + 10*A)
+
+    In here, after 9 A's we will have to inject some SQL code.
+
+    I had to figure out what kind of protection does the website use, and seeing that it didn't deny ' or " characters, it's probably doing some sanitisation of the data.
+    I figured that maybe, for some chars, it puts like a backslash or something to it ( \' would sanitise the ' for example)
+    This idea came after the fact that I saw by fuzzing these characters with 9*A + spechial_char that the response length is not the same as 9*A, meaning it doesn't remove the characters, they still remain somehow in the query!
+
+    Then I observed that for 9*A + ' or " or \ it starts actually a new block, making the response longer, meaning that this \ is being put before the ' or ".
+    To bypass this we will try to generate the query such that the \ is in one block and our query in the next one, and then we can substitute the row with \ with the one with xxxxxxAAAAAAAAAA to make it a valid row.
+    The sql injection used was: ' UNION ALL SELECT password from users;#
+    To test the SQL injection I firstly put @@version instead of password from user.
+
+    For this process, I user cyberchef, explored it's features and useful "recipes", with hex, urldecode,split,regex,base64decode/encode.
+    Also trying out more of the Burp Suite features. Like when fuzzing special characters for the last character after 9*A, i sent it to intruder, sniper mode, numbers, from 00 to FF, hex, min digits 2, max digits 2, add prefix %, url decode. And then analysed the queries based on response length and the size of the encoded query.
+
+
+    ! REMINDER: base64_decode for byte objects !!! SO if you unquote the string and it gives you a string, make sure to do string_url.encode('utf_8') to make sure all proper encodings are done!
+    
+natas29
+    
+    This challenge was really fun!
+    It had the main page as "index.pl" which indicates it is written in PEARL.
+    I did some documentation and learned about PEARL. It is a surprisingly fun and versatile language! I found out that it was invented for text processing mainly but it is preffered nowadays by system administrators because it gets things done quickly and with a lot of shortcuts!
+
+    Exploring some of it features, I found out that the open function can actually also execute commands! Also, by analysing the index.pl page's behaviour, it just prints out the contents of the file. This means that the only functions it uses for sure are: open, read, print; and from these only open seems vulnerable.
+
+    open(file_descriptor,file_name);
+
+    I saw that you can append to files or change the mode just by appending >,< or >>, but I couldn't write to new files or overwrite current files. Then the command execution:
+    If you put |file_name or file_name| than the file_name is interpreted as a command an the output is piped to the file descriptor so that in can be then read just like reading the contents of a file, but instead reading the stdout of our command.
+
+    So than adding file=|ls, or file=ls|, should work, but none work in this case.
+
+    NOW WE FUZZ!
+    One thing I learned from this challenge is that whenever you're not sure what to do, append the %00 - %FF characters (all ascii printable characters url encoded) in random positions and see if you get a difference in response length.
+    
+    In this case, when checking 'file=|ls%00' I saw a difference in response for the following characters: %00(null terminator),';','&', but only url encoded, which comes down to %3b, %26.
+
+    So then I checked the index.pl file, where I saw that a regex comparison is made with the word natas, and if that appears it writes "meeeeeem" and exits. So I just need to bypass this linux restriction.
+
+    INTERESTING STUFF: 
+    cat text
+    cat te*t
+    cat te?t
+    cat tes[t]
+    cat te'x't
+    cat te"x"t
+    cat te''xt
+
+    All these instructions do the same thing but when comparing to regex "text" they would not be detected as a match
+    To see more here: https://book.hacktricks.xyz/linux-hardening/bypass-bash-restrictions
+
+    And using this I did file=cat /etc/nat*s_webpass/nat*s30%00 for the final payload in the url, and got the password!
+
+    Success.
+    
+![Natas 29 Progress](natas29.png)
+
+Natas 30
+
+    In this challenge, the main page loaded was an index.pl, so a PERL file, and after inspecting the code we can see that it could be vulnerable by an SQLi. The two functions that give the impression of sanitizing the user input are: quote and prepare.
+    With some quick research I saw that prepare doesn't actually do any sanitization, it just compiles the code getting it ready to be executed.(It is used usually with placeholders ? and in execute to specity the argument in execute($arg)). Here, the vulnerable function is quote, since it has an optional 2nd argument which specify the data type. Quote() adds quotes to the given input, and removes any extra quotes, BECAUSE DATA QUERIED in SQL NEEDS TO BE BETWEEN QUOTES. BUT, if we give it an SQL_NUMERIC or SQL_INTEGER data type, then it should return the text without the quotes! I looked up the documentation of the DBI package and in there, the data types: I saw that integer was 4 and numeric was 2.
+    I tried first with words for data type, but then I tried with their integer corespondents, and It worked!
+
+    The main Idea of the exploit is to make the password field's value an array containing 2 values, which will then be passed as arguments to quote($arg1,$arg2). $arg1 needs to be QUOTED, since it will not be modified by quote() - 'a' or 1=1, for example. ANd then $arg2 needs to be 2 or for, equivalent for integer/numeric.
+
+    HOW DO WE GET 2 values for password? Just add another parameter password in the post request in Burp and you're done! This happens because, in Perl, if a parameter has multiple values it interprets tha values as a list, and when a list is passed as an argument to a function, apparently it enumerates the elements like this:
+
+    ex: arg = (a,b)
+    func($arg) => func((a,b)) WRONG!!! => func(a,b) CORRECT!
+
+    Using this we can actually give a value to the second argument from the function quote!
+
+    The exploit post data sent:
+
+    username=natas31&&password=''+or+1=1&&password=4
